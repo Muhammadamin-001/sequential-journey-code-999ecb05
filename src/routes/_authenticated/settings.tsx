@@ -212,7 +212,7 @@ function SettingsPage() {
                   placeholder="username"
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Bot orqali eslatma olish uchun (7-bosqichda faollashadi)
+                  Saqlangach, <a href="https://t.me/Atomodat_bot" target="_blank" rel="noreferrer" className="text-primary underline">@Atomodat_bot</a> ga kirib <code>/start</code> yuboring — eslatmalar Telegramga keladi.
                 </p>
               </div>
             </div>
