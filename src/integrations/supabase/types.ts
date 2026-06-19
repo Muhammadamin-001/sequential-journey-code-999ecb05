@@ -14,16 +14,363 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      admin_settings: {
+        Row: {
+          key: string
+          updated_at: string
+          updated_by: string | null
+          value: Json
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          updated_by?: string | null
+          value: Json
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: Json
+        }
+        Relationships: []
+      }
+      daily_reports: {
+        Row: {
+          completed_tasks: number
+          completion_rate: number
+          created_at: string
+          details: Json
+          id: string
+          missed_tasks: number
+          report_date: string
+          summary: string | null
+          total_tasks: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          completed_tasks?: number
+          completion_rate?: number
+          created_at?: string
+          details?: Json
+          id?: string
+          missed_tasks?: number
+          report_date: string
+          summary?: string | null
+          total_tasks?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          completed_tasks?: number
+          completion_rate?: number
+          created_at?: string
+          details?: Json
+          id?: string
+          missed_tasks?: number
+          report_date?: string
+          summary?: string | null
+          total_tasks?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      notifications: {
+        Row: {
+          body: string | null
+          created_at: string
+          id: string
+          is_read: boolean
+          link: string | null
+          metadata: Json
+          title: string
+          type: string
+          user_id: string
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          id?: string
+          is_read?: boolean
+          link?: string | null
+          metadata?: Json
+          title: string
+          type: string
+          user_id: string
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          id?: string
+          is_read?: boolean
+          link?: string | null
+          metadata?: Json
+          title?: string
+          type?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          full_name: string | null
+          id: string
+          telegram_id: number | null
+          telegram_username: string | null
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          full_name?: string | null
+          id: string
+          telegram_id?: number | null
+          telegram_username?: string | null
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          telegram_id?: number | null
+          telegram_username?: string | null
+          timezone?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      sections: {
+        Row: {
+          color: string
+          created_at: string
+          created_by: string | null
+          description: string | null
+          icon: string
+          id: string
+          is_active: boolean
+          name: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          icon?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          icon?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      task_history: {
+        Row: {
+          created_at: string
+          id: string
+          note: string | null
+          occurred_on: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          note?: string | null
+          occurred_on?: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          note?: string | null
+          occurred_on?: string
+          status?: Database["public"]["Enums"]["task_status"]
+          task_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_history_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasks: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          deadline_at: string | null
+          description: string | null
+          id: string
+          metadata: Json
+          priority: Database["public"]["Enums"]["task_priority"]
+          recurrence: Json | null
+          reminder_at: string | null
+          section_id: string | null
+          status: Database["public"]["Enums"]["task_status"]
+          task_type: Database["public"]["Enums"]["task_type"]
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          deadline_at?: string | null
+          description?: string | null
+          id?: string
+          metadata?: Json
+          priority?: Database["public"]["Enums"]["task_priority"]
+          recurrence?: Json | null
+          reminder_at?: string | null
+          section_id?: string | null
+          status?: Database["public"]["Enums"]["task_status"]
+          task_type: Database["public"]["Enums"]["task_type"]
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          deadline_at?: string | null
+          description?: string | null
+          id?: string
+          metadata?: Json
+          priority?: Database["public"]["Enums"]["task_priority"]
+          recurrence?: Json | null
+          reminder_at?: string | null
+          section_id?: string | null
+          status?: Database["public"]["Enums"]["task_status"]
+          task_type?: Database["public"]["Enums"]["task_type"]
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_section_id_fkey"
+            columns: ["section_id"]
+            isOneToOne: false
+            referencedRelation: "sections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      weekly_reports: {
+        Row: {
+          completed_tasks: number
+          completion_rate: number
+          created_at: string
+          details: Json
+          id: string
+          missed_tasks: number
+          summary: string | null
+          total_tasks: number
+          updated_at: string
+          user_id: string
+          week_start: string
+        }
+        Insert: {
+          completed_tasks?: number
+          completion_rate?: number
+          created_at?: string
+          details?: Json
+          id?: string
+          missed_tasks?: number
+          summary?: string | null
+          total_tasks?: number
+          updated_at?: string
+          user_id: string
+          week_start: string
+        }
+        Update: {
+          completed_tasks?: number
+          completion_rate?: number
+          created_at?: string
+          details?: Json
+          id?: string
+          missed_tasks?: number
+          summary?: string | null
+          total_tasks?: number
+          updated_at?: string
+          user_id?: string
+          week_start?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "manager" | "user"
+      task_priority: "low" | "medium" | "high" | "urgent"
+      task_status:
+        | "pending"
+        | "in_progress"
+        | "completed"
+        | "missed"
+        | "cancelled"
+      task_type: "daily" | "deadline" | "onetime"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +497,17 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "manager", "user"],
+      task_priority: ["low", "medium", "high", "urgent"],
+      task_status: [
+        "pending",
+        "in_progress",
+        "completed",
+        "missed",
+        "cancelled",
+      ],
+      task_type: ["daily", "deadline", "onetime"],
+    },
   },
 } as const
