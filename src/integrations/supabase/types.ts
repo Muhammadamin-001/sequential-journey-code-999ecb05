@@ -285,6 +285,33 @@ export type Database = {
           },
         ]
       }
+      telegram_pending_registrations: {
+        Row: {
+          chat_id: number
+          created_at: string
+          full_name: string | null
+          step: string
+          telegram_username: string | null
+          updated_at: string
+        }
+        Insert: {
+          chat_id: number
+          created_at?: string
+          full_name?: string | null
+          step: string
+          telegram_username?: string | null
+          updated_at?: string
+        }
+        Update: {
+          chat_id?: number
+          created_at?: string
+          full_name?: string | null
+          step?: string
+          telegram_username?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
