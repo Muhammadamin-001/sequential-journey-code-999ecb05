@@ -117,8 +117,18 @@ function AuthPage() {
               <TabsContent value="signin">
                 <form onSubmit={handleSignIn} className="space-y-4 pt-4">
                   <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+                    <Label htmlFor="email">Email yoki Telegram username</Label>
+                    <Input
+                      id="email"
+                      type="text"
+                      required
+                      placeholder="email@example.com yoki tg123456789"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Telegram orqali ro'yxatdan o'tgan bo'lsangiz, bot bergan login (<code>tg…</code>) yoki Telegram username'ingizdan foydalaning.
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="password">Parol</Label>
