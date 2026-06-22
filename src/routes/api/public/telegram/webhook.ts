@@ -2,20 +2,50 @@ import { createFileRoute } from "@tanstack/react-router";
 
 const TG_API = "https://api.telegram.org";
 
+type TelegramFrom = {
+  username?: string;
+  first_name?: string;
+};
+
+type TelegramMessage = {
+  chat?: { id?: number };
+  from?: TelegramFrom;
+  text?: string;
+};
+
+type TelegramCallbackQuery = {
+  id?: string;
+  data?: string;
+  from?: TelegramFrom;
+  message?: TelegramMessage;
+};
+
+type TelegramUpdate = {
+  message?: TelegramMessage;
+  edited_message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
+};
+
+
 function getMiniAppUrl(): string | null {
   return process.env.MINI_APP_URL || process.env.VITE_MINI_APP_URL || null;
 }
 
-function appButton() {
-  const url = getMiniAppUrl();
+function appButton(fallbackUrl?: string) {
+  const url = getMiniAppUrl() ?? fallbackUrl ?? null;
   if (!url) return undefined;
   // WebApp button only works over HTTPS. Telegram opens it inside Telegram.
   return {
     inline_keyboard: [[{ text: "📱 Ilovani ochish", web_app: { url } }]],
   };
 }
-
-async function tgSend(chatId: number, text: string, withButton = false, replyMarkup?: Record<string, unknown>) {
+  async function tgSend(
+  chatId: number,
+  text: string,
+  withButton = false,
+  replyMarkup?: Record<string, unknown>,
+  fallbackAppUrl?: string,
+) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return false;
   const body: Record<string, unknown> = {
@@ -26,7 +56,7 @@ async function tgSend(chatId: number, text: string, withButton = false, replyMar
   if (replyMarkup) {
     body.reply_markup = replyMarkup;
   } else if (withButton) {
-    const rm = appButton();
+    const rm = appButton(fallbackAppUrl);
     if (rm) body.reply_markup = rm;
   }
   const res = await fetch(`${TG_API}/bot${token}/sendMessage`, {
@@ -40,6 +70,27 @@ async function tgSend(chatId: number, text: string, withButton = false, replyMar
 function emailForChat(chatId: number) {
   return `tg${chatId}@telegram.local`;
 }
+const DEFAULT_TELEGRAM_PASSWORD = "Applicant001";
+
+function adminIds(): Set<string> {
+  return new Set(
+    (process.env.ADMIN_ID ?? process.env.TELEGRAM_ADMIN_ID ?? "")
+      .split(/[\s,;]+/)
+      .map((id) => id.trim())
+      .filter(Boolean),
+  );
+}
+
+function isAdminChat(chatId: number) {
+  return adminIds().has(String(chatId));
+}
+
+function loginText(chatId: number, tgUser?: string | null) {
+  return `🌐 <b>Web saytga kirish:</b>
+• Login: <code>tg${chatId}</code>${tgUser ? " yoki <code>" + tgUser + "</code>" : ""}
+• Parol: <code>${DEFAULT_TELEGRAM_PASSWORD}</code>`;
+}
+
 function consentKeyboard() {
   return {
     inline_keyboard: [
@@ -92,7 +143,12 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
           }
         }
 
-        const update = await request.json();
+        let update: TelegramUpdate;
+        try {
+          update = (await request.json()) as TelegramUpdate;
+        } catch {
+          return Response.json({ ok: true, ignored: "invalid_json" });
+        }
         const callbackQuery = update.callback_query;
         const message = update.message ?? update.edited_message ?? callbackQuery?.message;
         if (!message?.chat?.id) return Response.json({ ok: true, ignored: true });
@@ -103,9 +159,7 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
         const fromFirstName: string | undefined = from?.first_name;
         const text: string = (message.text ?? "").trim();
         const callbackData: string | undefined = callbackQuery?.data;
-        const { supabaseAdmin } = await import(
-          "@/integrations/supabase/client.server"
-        );
+        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
         // ---------- Helpers ----------
         const linkedProfile = async () => {
@@ -115,6 +169,62 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
             .eq("telegram_id", chatId)
             .maybeSingle();
           return data;
+        };
+        const provisionTelegramUser = async (fullName?: string | null) => {
+          const email = emailForChat(chatId);
+          const displayName = fullName || fromFirstName || fromUsername || `user${chatId}`;
+          const tgUser = fromUsername ?? null;
+
+          const existingProfile = await linkedProfile();
+          if (existingProfile) return { profile: existingProfile, created: false, tgUser };
+
+          const { data: userList, error: listErr } = await supabaseAdmin.auth.admin.listUsers();
+          if (listErr) throw listErr;
+          const existingUser = userList.users.find((user) => user.email === email);
+
+          let userId = existingUser?.id;
+          if (!userId) {
+            const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+              email,
+              password: DEFAULT_TELEGRAM_PASSWORD,
+              email_confirm: true,
+              user_metadata: { full_name: displayName },
+            });
+            if (createErr) throw createErr;
+            userId = created.user?.id;
+          }
+
+          if (!userId) throw new Error("Supabase user yaratilmadi");
+
+          await supabaseAdmin.from("profiles").upsert({
+            id: userId,
+            telegram_id: chatId,
+            telegram_username: tgUser,
+            full_name: displayName,
+          });
+
+          if (isAdminChat(chatId)) {
+            await supabaseAdmin
+              .from("user_roles")
+              .delete()
+              .eq("user_id", userId)
+              .neq("role", "admin");
+            await supabaseAdmin
+              .from("user_roles")
+              .upsert({ user_id: userId, role: "admin" }, { onConflict: "user_id,role" });
+          }
+
+          const { data: profile } = await supabaseAdmin
+            .from("profiles")
+            .select("id,full_name,telegram_username")
+            .eq("id", userId)
+            .maybeSingle();
+
+          return {
+            profile: profile ?? { id: userId, full_name: displayName, telegram_username: tgUser },
+            created: !existingUser,
+            tgUser,
+          };
         };
 
         // ---------- Consent callbacks ----------
@@ -126,10 +236,7 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
         }
 
         if (callbackData === "consent:no") {
-          await supabaseAdmin
-            .from("telegram_pending_registrations")
-            .delete()
-            .eq("chat_id", chatId);
+          await supabaseAdmin.from("telegram_pending_registrations").delete().eq("chat_id", chatId);
           await tgSend(
             chatId,
             `ℹ️ Xizmatdan foydalanish uchun Telegram ID, ism va username kabi ma'lumotlar ro'yxatdan o'tish va bildirishnomalarni yuborish uchun kerak bo'ladi. Rozilik bermasangiz, bot orqali ro'yxatdan o'tish davom etmaydi.
@@ -175,31 +282,34 @@ Bekor qilish: /cancel`,
         if (callbackData) return Response.json({ ok: true, ignored: true });
 
         // ---------- Commands ----------
-        if (text === "/start" || text === "/help") {
-          const profile = await linkedProfile();
-          if (profile) {
+        if (text === "/start" || text === "/help" || text === "/register") {
+          try {
+            const { profile, created, tgUser } = await provisionTelegramUser();
+            await supabaseAdmin
+              .from("telegram_pending_registrations")
+              .delete()
+              .eq("chat_id", chatId);
             await tgSend(
               chatId,
-              `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\nBildirishnomalar shu yerga keladi. Ilovani ochish uchun pastdagi tugmani bosing.`,
+              `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi va web ilova bilan ulandi." : "✅ Hisobingiz web ilova bilan ulangan."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n${loginText(chatId, profile.telegram_username ?? tgUser)}\n\nIlovani Telegramda ochish uchun pastdagi tugmani bosing 👇`,
               true,
+               undefined,
+              new URL("/", request.url).toString(),
             );
-          } else {
-            await tgSend(chatId, consentText(fromFirstName), false, consentKeyboard());
+          } catch (error) {
+            console.error(error);
+            await tgSend(
+              chatId,
+              "❌ Hisob yaratishda xatolik. Supabase sozlamalari va TELEGRAM_BOT_TOKEN/ADMIN_ID Cloudflare env qiymatlarini tekshiring.",
+            );
+          
           }
           return Response.json({ ok: true });
         }
 
         if (text === "/cancel") {
-          await supabaseAdmin
-            .from("telegram_pending_registrations")
-            .delete()
-            .eq("chat_id", chatId);
+          await supabaseAdmin.from("telegram_pending_registrations").delete().eq("chat_id", chatId);
           await tgSend(chatId, "❌ Bekor qilindi. /start");
-          return Response.json({ ok: true });
-        }
-
-        if (text === "/register") {
-          await tgSend(chatId, consentText(fromFirstName), false, consentKeyboard());
           return Response.json({ ok: true });
         }
 
@@ -224,10 +334,7 @@ Bekor qilish: /cancel`,
             );
             return Response.json({ ok: true });
           }
-          await supabaseAdmin
-            .from("profiles")
-            .update({ telegram_id: chatId })
-            .eq("id", profile.id);
+          await supabaseAdmin.from("profiles").update({ telegram_id: chatId }).eq("id", profile.id);
           await tgSend(
             chatId,
             `✅ <b>${profile.full_name ?? fromUsername}</b>, hisobingiz ulandi!`,
@@ -263,25 +370,20 @@ Bekor qilish: /cancel`,
         if (pending?.step === "await_password") {
           const password = text;
           if (password.length < 6 || password.startsWith("/")) {
-            await tgSend(
-              chatId,
-              "❌ Parol kamida 6 belgi bo'lsin. Qayta yuboring.",
-            );
+            await tgSend(chatId, "❌ Parol kamida 6 belgi bo'lsin. Qayta yuboring.");
             return Response.json({ ok: true });
           }
 
           const email = emailForChat(chatId);
-          const fullName =
-            pending.full_name ?? fromFirstName ?? `user${chatId}`;
+          const fullName = pending.full_name ?? fromFirstName ?? `user${chatId}`;
           const tgUser = pending.telegram_username ?? fromUsername ?? null;
 
-          const { data: created, error: createErr } =
-            await supabaseAdmin.auth.admin.createUser({
-              email,
-              password,
-              email_confirm: true,
-              user_metadata: { full_name: fullName },
-            });
+          const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+            email,
+            password,
+            email_confirm: true,
+            user_metadata: { full_name: fullName },
+          });
 
           if (createErr || !created.user) {
             await tgSend(
@@ -305,10 +407,7 @@ Bekor qilish: /cancel`,
             })
             .eq("id", created.user.id);
 
-          await supabaseAdmin
-            .from("telegram_pending_registrations")
-            .delete()
-            .eq("chat_id", chatId);
+          await supabaseAdmin.from("telegram_pending_registrations").delete().eq("chat_id", chatId);
 
           await tgSend(
             chatId,
@@ -319,10 +418,7 @@ Bekor qilish: /cancel`,
         }
 
         // Fallback
-        await tgSend(
-          chatId,
-          "Tushunmadim. Buyruqlar: /start /register /link /help",
-        );
+        await tgSend(chatId, "Tushunmadim. Buyruqlar: /start /register /link /help");
         return Response.json({ ok: true });
       },
     },
