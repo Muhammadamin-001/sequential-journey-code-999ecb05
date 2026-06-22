@@ -3,11 +3,8 @@ import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
-<<<<<<< HEAD
 import { ensureUserProfile } from "@/lib/auth-profile";
-=======
 import { resolveLoginEmail } from "@/lib/auth-resolve.functions";
->>>>>>> 7f07966be5ad45882fe18ef30d72d0140c6e0a26
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,16 +39,6 @@ function AuthPage() {
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-<<<<<<< HEAD
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (!error && data.user) {
-      const { error: profileError } = await ensureProfileSafely(data.user);
-      if (profileError) {
-        setLoading(false);
-        return toast.error(`Profil yaratilmadi: ${profileError.message}`);
-      }
-    }
-=======
     // Support email, "tg<chatId>", or Telegram username.
     let loginEmail = email;
     if (!email.includes("@")) {
@@ -62,8 +49,14 @@ function AuthPage() {
         // fall through; supabase will return its own error
       }
     }
-    const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
->>>>>>> 7f07966be5ad45882fe18ef30d72d0140c6e0a26
+    const { data, error } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
+    if (!error && data.user) {
+      const { error: profileError } = await ensureProfileSafely(data.user);
+      if (profileError) {
+        setLoading(false);
+        return toast.error(`Profil yaratilmadi: ${profileError.message}`);
+      }
+    }
     setLoading(false);
     if (error) return toast.error(error.message);
     toast.success("Xush kelibsiz!");
