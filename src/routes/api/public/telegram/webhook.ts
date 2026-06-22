@@ -15,7 +15,7 @@ function appButton() {
   };
 }
 
-async function tgSend(chatId: number, text: string, withButton = false) {
+async function tgSend(chatId: number, text: string, withButton = false, replyMarkup?: Record<string, unknown>) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return false;
   const body: Record<string, unknown> = {
@@ -23,7 +23,9 @@ async function tgSend(chatId: number, text: string, withButton = false) {
     text,
     parse_mode: "HTML",
   };
-  if (withButton) {
+  if (replyMarkup) {
+    body.reply_markup = replyMarkup;
+  } else if (withButton) {
     const rm = appButton();
     if (rm) body.reply_markup = rm;
   }
@@ -38,6 +40,42 @@ async function tgSend(chatId: number, text: string, withButton = false) {
 function emailForChat(chatId: number) {
   return `tg${chatId}@telegram.local`;
 }
+function consentKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: "✅ Ruxsat beraman", callback_data: "consent:yes" },
+        { text: "❌ Yo'q", callback_data: "consent:no" },
+      ],
+    ],
+  };
+}
+
+function retryKeyboard() {
+  return {
+    inline_keyboard: [[{ text: "🔄 Qayta so'rov", callback_data: "consent:retry" }]],
+  };
+}
+
+function consentText(firstName?: string) {
+  return `👋 Salom${firstName ? ", <b>" + firstName + "</b>" : ""}!
+
+Vazifa Tizimi xizmatidan foydalanish uchun Telegram profilingizdagi asosiy ma'lumotlar (Telegram ID, ism va username) Supabase bazasida saqlanishiga ruxsat bering.
+
+Ruxsat bersangiz, ro'yxatdan o'tishni Telegram ichida davom ettiramiz.`;
+}
+
+async function answerCallback(callbackQueryId: string) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return false;
+  const res = await fetch(`${TG_API}/bot${token}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id: callbackQueryId }),
+  });
+  return res.ok;
+}
+
 
 export const Route = createFileRoute("/api/public/telegram/webhook")({
   server: {
@@ -55,14 +93,16 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
         }
 
         const update = await request.json();
-        const message = update.message ?? update.edited_message;
+        const callbackQuery = update.callback_query;
+        const message = update.message ?? update.edited_message ?? callbackQuery?.message;
         if (!message?.chat?.id) return Response.json({ ok: true, ignored: true });
 
         const chatId: number = message.chat.id;
-        const fromUsername: string | undefined = message.from?.username;
-        const fromFirstName: string | undefined = message.from?.first_name;
+        const from = callbackQuery?.from ?? message.from;
+        const fromUsername: string | undefined = from?.username;
+        const fromFirstName: string | undefined = from?.first_name;
         const text: string = (message.text ?? "").trim();
-
+        const callbackData: string | undefined = callbackQuery?.data;
         const { supabaseAdmin } = await import(
           "@/integrations/supabase/client.server"
         );
@@ -77,6 +117,63 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
           return data;
         };
 
+        // ---------- Consent callbacks ----------
+        if (callbackQuery?.id) await answerCallback(callbackQuery.id);
+
+        if (callbackData === "consent:retry") {
+          await tgSend(chatId, consentText(fromFirstName), false, consentKeyboard());
+          return Response.json({ ok: true });
+        }
+
+        if (callbackData === "consent:no") {
+          await supabaseAdmin
+            .from("telegram_pending_registrations")
+            .delete()
+            .eq("chat_id", chatId);
+          await tgSend(
+            chatId,
+            `ℹ️ Xizmatdan foydalanish uchun Telegram ID, ism va username kabi ma'lumotlar ro'yxatdan o'tish va bildirishnomalarni yuborish uchun kerak bo'ladi. Rozilik bermasangiz, bot orqali ro'yxatdan o'tish davom etmaydi.
+
+Fikringiz o'zgarsa, pastdagi tugma orqali so'rovni qayta oching.`,
+            false,
+            retryKeyboard(),
+          );
+
+          return Response.json({ ok: true });
+        }
+
+        if (callbackData === "consent:yes") {
+          const existing = await linkedProfile();
+          if (existing) {
+            await tgSend(
+              chatId,
+              "✅ Sizning ma'lumotlaringiz allaqachon saqlangan va hisobingiz ulangan. Ilovani ochish uchun pastdagi tugmani bosing.",
+              true,
+            );
+            return Response.json({ ok: true });
+          }
+          await supabaseAdmin.from("telegram_pending_registrations").upsert(
+            {
+              chat_id: chatId,
+              telegram_username: fromUsername ?? null,
+              step: "await_name",
+              full_name: fromFirstName ?? null,
+            },
+            { onConflict: "chat_id" },
+          );
+          await tgSend(
+            chatId,
+            `✅ Ruxsat qabul qilindi va Telegram ma'lumotlaringiz ro'yxatdan o'tish uchun saqlandi.
+
+📝 1/2: Iltimos, to'liq ismingizni yuboring.
+
+Bekor qilish: /cancel`,
+          );
+          return Response.json({ ok: true });
+        }
+
+        if (callbackData) return Response.json({ ok: true, ignored: true });
+
         // ---------- Commands ----------
         if (text === "/start" || text === "/help") {
           const profile = await linkedProfile();
@@ -87,10 +184,7 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
               true,
             );
           } else {
-            await tgSend(
-              chatId,
-              `👋 Salom${fromFirstName ? ", <b>" + fromFirstName + "</b>" : ""}!\n\nBu Vazifa Tizimi boti.\n\n🆕 /register — yangi hisob ochish\n🔗 /link — mavjud web hisobni Telegramga ulash\nℹ️ /help — yordam`,
-            );
+            await tgSend(chatId, consentText(fromFirstName), false, consentKeyboard());
           }
           return Response.json({ ok: true });
         }
@@ -105,30 +199,10 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
         }
 
         if (text === "/register") {
-          const existing = await linkedProfile();
-          if (existing) {
-            await tgSend(
-              chatId,
-              "✅ Sizning hisobingiz allaqachon ulangan. /start",
-              true,
-            );
-            return Response.json({ ok: true });
-          }
-          await supabaseAdmin.from("telegram_pending_registrations").upsert(
-            {
-              chat_id: chatId,
-              telegram_username: fromUsername ?? null,
-              step: "await_name",
-              full_name: null,
-            },
-            { onConflict: "chat_id" },
-          );
-          await tgSend(
-            chatId,
-            "📝 <b>Ro'yxatdan o'tish</b>\n\n1/2: Iltimos, to'liq ismingizni yuboring.\n\nBekor qilish: /cancel",
-          );
+          await tgSend(chatId, consentText(fromFirstName), false, consentKeyboard());
           return Response.json({ ok: true });
         }
+
 
         if (text === "/link") {
           if (!fromUsername) {
