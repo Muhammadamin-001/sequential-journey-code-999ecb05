@@ -5,9 +5,28 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
+type RuntimeEnv = Record<string, string | undefined>;
+
+function workerEnv(): RuntimeEnv {
+  return (
+    globalThis as typeof globalThis & {
+      __WORKER_ENV__?: RuntimeEnv;
+    }
+  ).__WORKER_ENV__ ?? {};
+}
+
+function envValue(...names: string[]) {
+  const env = workerEnv();
+  for (const name of names) {
+    const value = process.env[name] ?? env[name];
+    if (value) return value;
+  }
+  return undefined;
+}
+
 function createSupabaseAdminClient() {
-  const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const SUPABASE_URL = envValue('SUPABASE_URL', 'VITE_SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = envValue('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     const missing = [

@@ -8,6 +8,10 @@ type ServerEntry = {
 };
 type RuntimeEnv = Record<string, string | undefined>;
 
+declare global {
+  var __WORKER_ENV__: RuntimeEnv | undefined;
+}
+
 const TELEGRAM_PATH_TOKEN_HEADER = "X-Internal-Telegram-Path-Token";
 const TELEGRAM_TOKEN_PATH_RE = /^\d+:[A-Za-z0-9_-]{20,}$/;
 
@@ -47,6 +51,7 @@ function runtimeEnv(env: unknown): RuntimeEnv {
 
 function applyRuntimeEnvToProcess(env: unknown) {
   const workerEnv = runtimeEnv(env);
+  globalThis.__WORKER_ENV__ = workerEnv;
 
   for (const [key, value] of Object.entries(workerEnv)) {
     if (typeof value === "string" && process.env[key] === undefined) {
