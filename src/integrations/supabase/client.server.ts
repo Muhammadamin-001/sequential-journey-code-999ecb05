@@ -2,60 +2,14 @@
 // Server-side Supabase client with service role key - bypasses RLS.
 // Use this for admin operations in server functions and server routes only.
 // For user-authenticated queries (with RLS), use the auth middleware instead.
-import { createClient } from '@supabase/supabase-js';
-import type { Database } from './types';
-
-type RuntimeEnv = Record<string, string | undefined>;
-
-function workerEnv(): RuntimeEnv {
-  return (
-    globalThis as typeof globalThis & {
-      __WORKER_ENV__?: RuntimeEnv;
-    }
-  ).__WORKER_ENV__ ?? {};
-}
-
-function envValue(...names: string[]) {
-  const env = workerEnv();
-  for (const name of names) {
-    const value = process.env[name] ?? env[name];
-    if (value) return value;
-  }
-  return undefined;
-}
-
-function createSupabaseAdminClient() {
-  const SUPABASE_URL = envValue('SUPABASE_URL', 'VITE_SUPABASE_URL');
-  const SUPABASE_SERVICE_ROLE_KEY = envValue('SUPABASE_SERVICE_ROLE_KEY');
-
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    const missing = [
-      ...(!SUPABASE_URL ? ['SUPABASE_URL'] : []),
-      ...(!SUPABASE_SERVICE_ROLE_KEY ? ['SUPABASE_SERVICE_ROLE_KEY'] : []),
-    ];
-    const message = `Missing Supabase environment variable(s): ${missing.join(', ')}. Connect Supabase in Lovable Cloud.`;
-    console.error(`[Supabase] ${message}`);
-    throw new Error(message);
-  }
-
-  return createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: {
-      storage: undefined,
-      persistSession: false,
-      autoRefreshToken: false,
-    }
-  });
-}
-
-let _supabaseAdmin: ReturnType<typeof createSupabaseAdminClient> | undefined;
+import { getSupabaseAdminClient } from '@/lib/worker-runtime';
 
 // Server-side Supabase client with service role - bypasses RLS
 // SECURITY: Only use this for trusted server-side operations, never expose to client code
 // Load inside server handlers: const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 // Top-level import is safe only in other .server.ts modules - route files and *.functions.ts ship to the client bundle.
-export const supabaseAdmin = new Proxy({} as ReturnType<typeof createSupabaseAdminClient>, {
+export const supabaseAdmin = new Proxy({} as ReturnType<typeof getSupabaseAdminClient>, {
   get(_, prop, receiver) {
-    if (!_supabaseAdmin) _supabaseAdmin = createSupabaseAdminClient();
-    return Reflect.get(_supabaseAdmin, prop, receiver);
+    return Reflect.get(getSupabaseAdminClient(), prop, receiver);
   },
 });

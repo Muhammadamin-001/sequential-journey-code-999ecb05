@@ -2,15 +2,11 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { initializeWorkerRuntime, runtimeEnv, type WorkerEnv } from "./lib/worker-runtime";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
 };
-type RuntimeEnv = Record<string, string | undefined>;
-
-declare global {
-  var __WORKER_ENV__: RuntimeEnv | undefined;
-}
 
 const TELEGRAM_PATH_TOKEN_HEADER = "X-Internal-Telegram-Path-Token";
 const TELEGRAM_ENV_DIAG_HEADER = "X-Internal-Env-Diag";
@@ -46,36 +42,16 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
   });
 }
 
-function runtimeEnv(env: unknown): RuntimeEnv {
-  return typeof env === "object" && env !== null ? (env as RuntimeEnv) : {};
-}
-
-function applyRuntimeEnvToProcess(env: unknown) {
-  const workerEnv = runtimeEnv(env);
-  globalThis.__WORKER_ENV__ = workerEnv;
-
-  for (const [key, value] of Object.entries(workerEnv)) {
-    if (typeof value === "string" && process.env[key] === undefined) {
-      process.env[key] = value;
-    }
-  }
-}
-
-function getTelegramBotToken(env: unknown): string | undefined {
-  return runtimeEnv(env).TELEGRAM_BOT_TOKEN ?? process.env.TELEGRAM_BOT_TOKEN;
-}
-
-function maybeRewriteTelegramTokenWebhook(request: Request, env: unknown): Request {
+function maybeRewriteTelegramTokenWebhook(request: Request, env: WorkerEnv, botToken?: string): Request {
   if (request.method !== "POST") return request;
 
-  const token = getTelegramBotToken(env);
   const url = new URL(request.url);
   const normalizedPath = url.pathname.replace(/\/+$|^\/+/g, "");
 
   // Some Telegram bot hosting examples use /<BOT_TOKEN> as the webhook path.
   // Keep the canonical TanStack route working while accepting that deployment
   // style too, so existing Telegram setWebhook URLs do not 404.
-  if (normalizedPath !== token && !TELEGRAM_TOKEN_PATH_RE.test(normalizedPath)) {
+  if (normalizedPath !== botToken && !TELEGRAM_TOKEN_PATH_RE.test(normalizedPath)) {
     return request;
   }
 
@@ -85,8 +61,8 @@ function maybeRewriteTelegramTokenWebhook(request: Request, env: unknown): Reque
   headers.set(
     TELEGRAM_ENV_DIAG_HEADER,
     JSON.stringify({
-      workerSupabaseServiceRole: Boolean(runtimeEnv(env).SUPABASE_SERVICE_ROLE_KEY),
-      workerSupabaseUrl: Boolean(runtimeEnv(env).SUPABASE_URL ?? runtimeEnv(env).VITE_SUPABASE_URL),
+      workerSupabaseServiceRole: Boolean(env.SUPABASE_SERVICE_ROLE_KEY),
+      workerSupabaseUrl: Boolean(env.SUPABASE_URL ?? env.VITE_SUPABASE_URL),
     }),
   );
 
@@ -104,10 +80,21 @@ function maybeRewriteTelegramTokenWebhook(request: Request, env: unknown): Reque
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
-      applyRuntimeEnvToProcess(env);
+      const workerEnv = runtimeEnv(env);
+      const supabaseUrl = workerEnv.SUPABASE_URL || workerEnv.VITE_SUPABASE_URL;
+      const supabaseServiceKey = workerEnv.SUPABASE_SERVICE_ROLE_KEY;
+      const botToken = workerEnv.TELEGRAM_BOT_TOKEN;
+
+      initializeWorkerRuntime({
+        env: workerEnv,
+        supabaseUrl,
+        supabaseServiceKey,
+        botToken,
+      });
+
       const handler = await getServerEntry();
       const response = await handler.fetch(
-        maybeRewriteTelegramTokenWebhook(request, env),
+        maybeRewriteTelegramTokenWebhook(request, workerEnv, botToken),
         env,
         ctx,
       );
