@@ -73,6 +73,12 @@ async function tgSendWithToken(
     chat_id: chatId,
     text,
     parse_mode: "HTML",
+    // Telegram pre-fetches plain URLs in message text to build a link preview.
+    // Our auto-login links are single-use magic-link tokens, so that pre-fetch
+    // silently burns the token before the user ever taps it, causing
+    // "Email link is invalid or has expired". Disabling the preview stops
+    // Telegram from touching the URL at all.
+    link_preview_options: { is_disabled: true },
   };
   if (replyMarkup) {
     body.reply_markup = replyMarkup;
