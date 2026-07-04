@@ -300,10 +300,15 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
             const displayName = fullName || fromFirstName || fromUsername || `user${chatId}`;
             const tgUser = fromUsername ?? null;
 
-            const { data: userList, error: listErr } = await supabaseAdmin.auth.admin.listUsers();
-            if (listErr) throw listErr;
-            const existingUser = userList.users.find((user) => user.email === email);
-            let userId = existingUser?.id;
+            // Fast, indexed lookup via profiles.telegram_id instead of listUsers().
+            // listUsers() pages through ALL Supabase users (50 per page by default),
+            // so once the project passed ~50 users this silently stopped finding
+            // returning users past page 1 — it would then try to createUser() with
+            // an email that already existed (throwing "User already registered"),
+            // and it added a slow full-list round trip to every single /start,
+            // which is part of why the bot felt slow.
+            const existingProfile = await linkedProfile();
+            let userId = existingProfile?.id;
             const created = !userId;
 
             if (userId) {
@@ -388,7 +393,7 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
               const autoLoginUrl = await buildAutoLoginUrl(email);
               await send(
                 chatId,
-                `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi." : "✅ Hisobingiz allaqachon faol."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n🌐 <b>Ilovaga kirish:</b>\n${autoLoginUrl}\n\nLogin yoki parol kiritish shart emas — havola (yoki pastdagi tugma) orqali avtomatik kirasiz.`,
+                `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi." : "✅ Hisobingiz allaqachon faol."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n🌐 Ilovaga kirish uchun pastdagi <b>"📱 Ilovani ochish"</b> tugmasini bosing — login yoki parol kerak emas.\n\n⚠️ Havola bir martalik ishlaydi: uni faqat shu tugma orqali oching. Agar boshqa brauzerga nusxalab ochsangiz yoki tugmani ikki marta bossangiz, ikkinchi urinish "link expired" xatosini beradi — bu holatda shunchaki /start ni qayta yuboring.`,
                 false,
                 { inline_keyboard: [[{ text: "📱 Ilovani ochish", web_app: { url: autoLoginUrl } }]] },
               );
@@ -404,16 +409,13 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
 
           if (text === "/resetpassword") {
             try {
-              const email = emailForChat(chatId);
-              const { data: userList, error: listErr } = await supabaseAdmin.auth.admin.listUsers();
-              if (listErr) throw listErr;
-              const existingUser = userList.users.find((user) => user.email === email);
-              if (!existingUser) {
+              const existingProfile = await linkedProfile();
+              if (!existingProfile) {
                 await send(chatId, "❌ Hisobingiz topilmadi. Avval /start yuboring.");
                 return Response.json({ ok: true });
               }
               const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(
-                existingUser.id,
+                existingProfile.id,
                 { password: randomTelegramPassword() },
               );
               if (updateErr) throw updateErr;
@@ -497,7 +499,7 @@ Bekor qilish: /cancel`,
               const autoLoginUrl = await buildAutoLoginUrl(email);
               await send(
                 chatId,
-                `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi va web ilova bilan ulandi." : "✅ Hisobingiz web ilova bilan ulangan."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n🌐 <b>Ilovaga kirish:</b>\n${autoLoginUrl}\n\nLogin yoki parol kiritish shart emas — havola (yoki pastdagi tugma) orqali avtomatik kirasiz.`,
+                `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi va web ilova bilan ulandi." : "✅ Hisobingiz web ilova bilan ulangan."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n🌐 Ilovaga kirish uchun pastdagi <b>"📱 Ilovani ochish"</b> tugmasini bosing — login yoki parol kerak emas.\n\n⚠️ Havola bir martalik ishlaydi: faqat shu tugma orqali oching, ikki marta bosmang.`,
                 false,
                 { inline_keyboard: [[{ text: "📱 Ilovani ochish", web_app: { url: autoLoginUrl } }]] },
               );
@@ -586,11 +588,8 @@ Bekor qilish: /cancel`,
             const tgUser = pending.telegram_username ?? fromUsername ?? null;
 
             try {
-              const { data: userList, error: listErr } = await supabaseAdmin.auth.admin.listUsers();
-              if (listErr) throw listErr;
-
-              const existingUser = userList.users.find((user) => user.email === email);
-              let userId = existingUser?.id;
+              const existingProfile = await linkedProfile();
+              let userId = existingProfile?.id;
               let createdAccount = false;
 
               if (userId) {
