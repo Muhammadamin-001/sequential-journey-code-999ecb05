@@ -285,26 +285,40 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
             return data;
           };
 
-          const provisionTelegramUser = async (fullName?: string | null) => {
+          const provisionTelegramUser = async (fullName?: string | null, forceNewPassword = false) => {
             const email = emailForChat(chatId);
             const displayName = fullName || fromFirstName || fromUsername || `user${chatId}`;
             const tgUser = fromUsername ?? null;
-
-            // Existing Telegram users still receive a fresh random password on /start.
-            const password = randomTelegramPassword();
 
             const { data: userList, error: listErr } = await supabaseAdmin.auth.admin.listUsers();
             if (listErr) throw listErr;
             const existingUser = userList.users.find((user) => user.email === email);
             let userId = existingUser?.id;
+
+            // Only a brand-new account gets a freshly generated password. Existing
+            // accounts keep whatever password the user already has, unless a reset
+            // is explicitly requested (forceNewPassword), so /start never silently
+            // invalidates a password the user is already using to log in.
+            let password: string | null = null;
+
             if (userId) {
-              const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-                password,
-                email_confirm: true,
-                user_metadata: { full_name: displayName },
-              });
-              if (updateErr) throw updateErr;
+              if (forceNewPassword) {
+                password = randomTelegramPassword();
+                const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+                  password,
+                  email_confirm: true,
+                  user_metadata: { full_name: displayName },
+                });
+                if (updateErr) throw updateErr;
+              } else {
+                const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+                  email_confirm: true,
+                  user_metadata: { full_name: displayName },
+                });
+                if (updateErr) throw updateErr;
+              }
             } else {
+              password = randomTelegramPassword();
               const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser(
                 {
                   email,
@@ -359,9 +373,12 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
                 .from("telegram_pending_registrations")
                 .delete()
                 .eq("chat_id", chatId);
+              const loginInfo = password
+                ? loginText(chatId, password, profile.telegram_username ?? tgUser)
+                : `🌐 <b>Tizimga kirish uchun:</b>\n\nLogin: ${profile.telegram_username ? `<code>${profile.telegram_username}</code> yoki ` : ""}user_id <code>${chatId}</code>\nParol: oldin tanlagan/olgan parolingiz o'zgarmadi.\n\nParolni unutgan bo'lsangiz: /resetpassword`;
               await send(
                 chatId,
-                `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi va bazaga saqlandi." : "✅ Hisobingiz bazada yangilandi."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n${loginText(chatId, password, profile.telegram_username ?? tgUser)}\n\nPastdagi menyudan <b>🔗 Hozirgi havola</b> tugmasini bosib ilovani ochishingiz mumkin.`,
+                `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi va bazaga saqlandi." : "✅ Hisobingiz bazada yangilandi."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n${loginInfo}\n\nPastdagi menyudan <b>🔗 Hozirgi havola</b> tugmasini bosib ilovani ochishingiz mumkin.`,
                 false,
                 startKeyboard(request),
               );
@@ -370,6 +387,24 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
               await send(
                 chatId,
                 `❌ /start vaqtida hisob yaratishda xatolik: ${publicProvisioningError(error, request)}`,
+              );
+            }
+            return Response.json({ ok: true });
+          }
+
+          if (text === "/resetpassword") {
+            try {
+              const { profile, password, tgUser } = await provisionTelegramUser(undefined, true);
+              if (!password) throw new Error("Parol yaratilmadi");
+              await send(
+                chatId,
+                `🔑 Parolingiz yangilandi!\n\n${loginText(chatId, password, profile.telegram_username ?? tgUser)}`,
+              );
+            } catch (error) {
+              console.error(error);
+              await send(
+                chatId,
+                `❌ Parolni yangilashda xatolik: ${publicProvisioningError(error, request)}`,
               );
             }
             return Response.json({ ok: true });
@@ -605,7 +640,7 @@ Bekor qilish: /cancel`,
           }
 
           // Fallback
-          await send(chatId, "Tushunmadim. Buyruqlar: /start /register /link /help");
+          await send(chatId, "Tushunmadim. Buyruqlar: /start /register /link /resetpassword /help");
           return Response.json({ ok: true });
         } catch (error) {
           console.error("[Telegram webhook] Unhandled error", error);
