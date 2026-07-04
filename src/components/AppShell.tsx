@@ -73,19 +73,18 @@ export function AppShell({ title, actions, children }: { title: string; actions?
       </div>
       <nav className="fixed inset-x-0 bottom-0 z-20 flex items-stretch justify-around border-t border-border/60 bg-card/95 backdrop-blur md:hidden">
         {nav.map((item) => {
-          const active = pathname === item.to || pathname.startsWith(item.to + "/");
+          const active = pathname === item.to;
           const Icon = item.icon;
           return (
             <Link
               key={item.to}
               to={item.to}
               className={cn(
-                "flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[11px] transition-colors",
+                "flex flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors",
                 active ? "text-primary" : "text-muted-foreground",
               )}
             >
-              <Icon className="size-5" />
-              <span>{item.label}</span>
+              <Icon className={cn("size-6", active && "fill-primary/15")} />
             </Link>
           );
         })}
