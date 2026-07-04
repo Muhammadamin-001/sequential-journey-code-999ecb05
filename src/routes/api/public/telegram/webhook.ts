@@ -236,7 +236,7 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
           console.error("[Telegram webhook] Missing TELEGRAM_BOT_TOKEN secret.");
           return Response.json({ ok: true, configured: false, error: "missing_bot_token" });
         }
-        let chatId: number | undefined;
+        let chatIdForErrorHandling: number | undefined;
         const send = (
           targetChatId: number,
           text: string,
@@ -261,9 +261,13 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
           }
           const callbackQuery = update.callback_query;
           const message = update.message ?? update.edited_message ?? callbackQuery?.message;
-          if (!message?.chat?.id) return Response.json({ ok: true, ignored: true });
+          if (typeof message?.chat?.id !== "number") return Response.json({ ok: true, ignored: true });
 
-          chatId = message.chat.id;
+          // Guarded and narrowed to `number` right here, so every use below
+          // (emailForChat, .eq("telegram_id", chatId), etc.) is type-safe —
+          // no more "number | undefined" errors from tsc.
+          const chatId: number = message.chat.id;
+          chatIdForErrorHandling = chatId;
           const from = callbackQuery?.from ?? message.from;
           const fromUsername: string | undefined = from?.username;
           const fromFirstName: string | undefined = from?.first_name;
@@ -661,9 +665,9 @@ Bekor qilish: /cancel`,
           return Response.json({ ok: true });
         } catch (error) {
           console.error("[Telegram webhook] Unhandled error", error);
-          if (chatId) {
+          if (chatIdForErrorHandling) {
             await send(
-              chatId,
+              chatIdForErrorHandling,
               `❌ Bot ichki xatolikka uchradi, lekin webhook 200 qaytardi. Tafsilot: ${publicProvisioningError(error, request)}`,
             ).catch((sendError) =>
               console.error("[Telegram webhook] Failed to send error message", sendError),
