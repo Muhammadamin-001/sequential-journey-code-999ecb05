@@ -2,6 +2,43 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
+// In-memory fallback: ba'zi Telegram WebView muhitlarida (masalan Telegram
+// Desktop/Web ichidagi sandboxed iframe) localStorage o'qish/yozish
+// bloklangan bo'ladi. Bunday holatda Supabase mijoz kutubxonasi sessiyani
+// saqlay olmaydi va auth "muvaffaqiyatli" bo'lsa ham keyinchalik yo'qoladi.
+// Shu sababli localStorage mavjudligini avval tekshiramiz va bo'lmasa
+// xotiradagi (sahifa yangilanguncha yashaydigan) storage'ga tushamiz.
+function isLocalStorageUsable(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const testKey = '__supabase_storage_test__';
+    window.localStorage.setItem(testKey, '1');
+    window.localStorage.removeItem(testKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+class MemoryStorage {
+  private store = new Map<string, string>();
+  getItem(key: string) {
+    return this.store.has(key) ? this.store.get(key)! : null;
+  }
+  setItem(key: string, value: string) {
+    this.store.set(key, value);
+  }
+  removeItem(key: string) {
+    this.store.delete(key);
+  }
+}
+
+// Modul darajasida bitta nusxa — shuning uchun sahifa ichida (SPA
+// navigatsiyalarda) sessiya saqlanib qoladi, faqat to'liq reload bo'lsa
+// yo'qoladi (bu Telegram Mini App uchun muhim emas, chunki initData orqali
+// har safar avtomatik qayta login bo'ladi).
+const memoryStorageSingleton = new MemoryStorage();
+
 function createSupabaseClient() {
   // Browser-only client configuration is injected by Vite for public values.
   // Cloudflare Worker server code must use runtime env via src/lib/worker-runtime.ts.
@@ -17,9 +54,23 @@ function createSupabaseClient() {
     throw new Error(message);
   }
 
+  const usableLocalStorage = isLocalStorageUsable();
+  if (!usableLocalStorage && typeof window !== 'undefined') {
+    console.warn(
+      '[Supabase] localStorage is not usable in this environment (e.g. sandboxed ' +
+        'Telegram WebView). Falling back to in-memory session storage; the ' +
+        'session will not survive a full page reload.',
+    );
+  }
+
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
-      storage: typeof window !== 'undefined' ? localStorage : undefined,
+      storage:
+        typeof window !== 'undefined'
+          ? usableLocalStorage
+            ? localStorage
+            : memoryStorageSingleton
+          : undefined,
       persistSession: true,
       autoRefreshToken: true,
     }
@@ -36,4 +87,3 @@ export const supabase = new Proxy({} as ReturnType<typeof createSupabaseClient>,
     return Reflect.get(_supabase, prop, receiver);
   },
 });
-

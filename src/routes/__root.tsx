@@ -165,8 +165,6 @@ function RootComponent() {
 
       const { data: existing } = await supabase.auth.getSession();
       if (existing.session) {
-        // Sessiya allaqachon bor (masalan localStorage'da qolgan) — lekin
-        // hozir /auth sahifasida turgan bo'lsak, dashboard'ga o'tamiz.
         if (window.location.pathname === "/auth" || window.location.pathname === "/") {
           router.navigate({ to: "/dashboard" });
         }
@@ -187,14 +185,29 @@ function RootComponent() {
           });
           if (setSessionError) {
             console.error("[telegram-auto-login] setSession failed", setSessionError);
-            toast.error("Sessiya o'rnatilmadi. Qayta urinib ko'ring.");
+            toast.error(
+              `Sessiya o'rnatilmadi: ${setSessionError.message || setSessionError.name || "noma'lum xato"}`,
+            );
+            return;
+          }
+          // setSession muvaffaqiyatli bo'lsa ham, tarmoq kechikishi tufayli
+          // localStorage yozilishi asinxron/kechroq ro'y berishi mumkin —
+          // shu sababli navigate qilishdan oldin sessiya haqiqatan ham
+          // saqlanganini tasdiqlaymiz.
+          const { data: verify } = await supabase.auth.getSession();
+          if (!verify.session) {
+            toast.error(
+              "Sessiya saqlanmadi (brauzer xotira cheklovi bo'lishi mumkin). Qaytadan urining.",
+            );
+            console.error("[telegram-auto-login] session missing after setSession");
             return;
           }
           router.navigate({ to: "/dashboard" });
         }
       } catch (err) {
         console.error("[telegram-auto-login]", err);
-        toast.error("Telegram orqali avtomatik kirish muvaffaqiyatsiz bo'ldi.");
+        const message = err instanceof Error ? err.message : String(err);
++        toast.error(`Telegram orqali avtomatik kirish muvaffaqiyatsiz bo'ldi: ${message}`);
       }
     };
 
