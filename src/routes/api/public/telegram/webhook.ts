@@ -73,11 +73,6 @@ async function tgSendWithToken(
     chat_id: chatId,
     text,
     parse_mode: "HTML",
-    // Telegram pre-fetches plain URLs in message text to build a link preview.
-    // Our auto-login links are single-use magic-link tokens, so that pre-fetch
-    // silently burns the token before the user ever taps it, causing
-    // "Email link is invalid or has expired". Disabling the preview stops
-    // Telegram from touching the URL at all.
     link_preview_options: { is_disabled: true },
   };
   if (replyMarkup) {
@@ -111,18 +106,6 @@ async function tgSend(
   );
 }
 
-function startKeyboard(request: Request) {
-  const url = normalizeHttpsUrl(appLinkText(request));
-  const button = url
-    ? { text: "🔗 Hozirgi havola", web_app: { url } }
-    : { text: "🔗 Hozirgi havola" };
-  return {
-    keyboard: [[button]],
-    resize_keyboard: true,
-    one_time_keyboard: false,
-  };
-}
-
 function appLinkText(request: Request) {
   const appUrl =
     normalizeHttpsUrl(getMiniAppUrl()) ?? normalizeHttpsUrl(new URL("/", request.url).toString());
@@ -137,15 +120,6 @@ function emailForChat(chatId: number) {
   return `tg${chatId}@telegram.local`;
 }
 
-function randomPin() {
-  // 6-digit numeric PIN — easy to type on a phone, not a full password.
-  // Supabase's default minimum password length (6) is satisfied by this.
-  const bytes = new Uint8Array(4);
-  crypto.getRandomValues(bytes);
-  const n = new DataView(bytes.buffer).getUint32(0);
-  return String(100000 + (n % 900000));
-}
-
 function adminIds(): Set<string> {
   return new Set(
     (getWorkerRuntime().telegramAdminIds ?? "")
@@ -157,14 +131,6 @@ function adminIds(): Set<string> {
 
 function isAdminChat(chatId: number) {
   return adminIds().has(String(chatId));
-}
-
-function loginText(chatId: number, pin: string, tgUser?: string | null) {
-  const usernameLogin = tgUser ? `<code>${tgUser}</code> yoki ` : "";
-  return `🌐 <b>Tizimga kirish uchun:</b>
-
-Login: ${usernameLogin}user_id <code>${chatId}</code>
-PIN kod: <code>${pin}</code>`;
 }
 
 function consentKeyboard() {
@@ -266,9 +232,6 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
           const message = update.message ?? update.edited_message ?? callbackQuery?.message;
           if (typeof message?.chat?.id !== "number") return Response.json({ ok: true, ignored: true });
 
-          // Guarded and narrowed to `number` right here, so every use below
-          // (emailForChat, .eq("telegram_id", chatId), etc.) is type-safe —
-          // no more "number | undefined" errors from tsc.
           const chatId: number = message.chat.id;
           chatIdForErrorHandling = chatId;
           const from = callbackQuery?.from ?? message.from;
@@ -439,7 +402,7 @@ Fikringiz o'zgarsa, pastdagi tugma orqali so'rovni qayta oching.`,
               chatId,
               `✅ Ruxsat qabul qilindi va Telegram ma'lumotlaringiz ro'yxatdan o'tish uchun saqlandi.
 
-📝 1/2: Iltimos, to'liq ismingizni yuboring.
+📝 Iltimos, to'liq ismingizni yuboring — shundan so'ng hisobingiz tayyor bo'ladi, login yoki parol kerak bo'lmaydi.
 
 Bekor qilish: /cancel`,
             );
@@ -524,89 +487,18 @@ Bekor qilish: /cancel`,
               await send(chatId, "❌ Ism kamida 2 belgi bo'lsin. Qayta yuboring.");
               return Response.json({ ok: true });
             }
-            await supabaseAdmin
-              .from("telegram_pending_registrations")
-              .update({ full_name: name, step: "await_password" })
-              .eq("chat_id", chatId);
-            await send(
-              chatId,
-              "🔐 2/2: Endi <b>parol</b> tanlang (kamida 6 belgi). Bu parol bilan web saytga ham kira olasiz.\n\nBekor qilish: /cancel",
-            );
-            return Response.json({ ok: true });
-          }
-
-          if (pending?.step === "await_password") {
-            const password = text;
-            if (password.length < 6 || password.startsWith("/")) {
-              await send(chatId, "❌ Parol kamida 6 belgi bo'lsin. Qayta yuboring.");
-              return Response.json({ ok: true });
-            }
-
-            const email = emailForChat(chatId);
-            const fullName = pending.full_name ?? fromFirstName ?? `user${chatId}`;
-            const tgUser = pending.telegram_username ?? fromUsername ?? null;
 
             try {
-              const existingProfile = await linkedProfile();
-              let userId = existingProfile?.id;
-              let createdAccount = false;
-
-              if (userId) {
-                const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-                  password,
-                  email_confirm: true,
-                  user_metadata: { full_name: fullName },
-                });
-                if (updateErr) throw updateErr;
-              } else {
-                const { data: created, error: createErr } =
-                  await supabaseAdmin.auth.admin.createUser({
-                    email,
-                    password,
-                    email_confirm: true,
-                    user_metadata: { full_name: fullName },
-                  });
-                if (createErr) throw createErr;
-                userId = created.user?.id;
-                createdAccount = true;
-              }
-
-              if (!userId) throw new Error("Supabase user yaratilmadi");
-
-              // Profile is usually auto-created by handle_new_user trigger, but upsert here
-              // guarantees that Telegram registration always finishes with a usable login code.
-              const { error: profileErr } = await supabaseAdmin.from("profiles").upsert({
-                id: userId,
-                telegram_id: chatId,
-                telegram_username: tgUser,
-                full_name: fullName,
-              });
-              if (profileErr) throw profileErr;
-
-              if (isAdminChat(chatId)) {
-                await supabaseAdmin
-                  .from("user_roles")
-                  .delete()
-                  .eq("user_id", userId)
-                  .neq("role", "admin");
-                const { error: roleErr } = await supabaseAdmin
-                  .from("user_roles")
-                  .upsert({ user_id: userId, role: "admin" }, { onConflict: "user_id,role" });
-                if (roleErr) throw roleErr;
-              }
-
-
+              const { profile, created } = await provisionTelegramUser(name);
               await supabaseAdmin
                 .from("telegram_pending_registrations")
                 .delete()
                 .eq("chat_id", chatId);
-
               await send(
                 chatId,
-                `✅ <b>Tabriklaymiz, ${fullName}!</b>\n\n${createdAccount ? "Hisobingiz yaratildi" : "Mavjud hisobingiz yangilandi"} va botga ulandi.\n\n🔑 <b>Sizning kodingiz:</b> <code>tg${chatId}</code>\n\n🌐 <b>Web saytga kirish:</b>\n• Login (username): <code>tg${chatId}</code>${tgUser ? " yoki <code>" + tgUser + "</code>" : ""}\n• Parol: o'zingiz tanlagan parol${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\nIlovani Telegramda ochish uchun pastdagi tugmani bosing 👇`,
-                true,
-                undefined,
-                new URL("/", request.url).toString(),
+                `✅ <b>Tabriklaymiz, ${profile.full_name ?? name}!</b>\n\n${created ? "Hisobingiz yaratildi" : "Mavjud hisobingiz yangilandi"} va botga ulandi.${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n📱 Ilovani ochish uchun pastdagi tugmani bosing — login yoki parol kerak emas, avtomatik kirasiz.`,
+                false,
+                appLinkKeyboard(request),
               );
             } catch (error) {
               console.error(error);
@@ -619,7 +511,7 @@ Bekor qilish: /cancel`,
           }
 
           // Fallback
-          await send(chatId, "Tushunmadim. Buyruqlar: /start /register /link /resetpassword /help");
+          await send(chatId, "Tushunmadim. Buyruqlar: /start /register /link /help");
           return Response.json({ ok: true });
         } catch (error) {
           console.error("[Telegram webhook] Unhandled error", error);

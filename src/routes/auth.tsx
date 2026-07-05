@@ -1,22 +1,20 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import type { User } from "@supabase/supabase-js";
+import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { ensureUserProfile } from "@/lib/auth-profile";
-import { resolveLoginEmail } from "@/lib/auth-resolve.functions";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { toast } from "sonner";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Send } from "lucide-react";
+
+// Public — not a secret. Set this to your bot's @username (no "@") via a
+// VITE_TELEGRAM_BOT_USERNAME env var (Cloudflare Worker vars + local .env).
+const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME as string | undefined;
+const BOT_URL = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : undefined;
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
       { title: "Kirish — Vazifa Tizimi" },
-      { name: "description", content: "Hisobingizga kiring yoki ro'yxatdan o'ting." },
+      { name: "description", content: "Telegram bot orqali kiring." },
     ],
   }),
   component: AuthPage,
@@ -24,9 +22,6 @@ export const Route = createFileRoute("/auth")({
 
 function AuthPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -34,43 +29,19 @@ function AuthPage() {
     });
   }, [navigate]);
 
-  const handleSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    // Support email, "tg<chatId>", or Telegram username.
-    let loginEmail = email;
-    if (!email.includes("@")) {
-      try {
-        const res = await resolveLoginEmail({ data: { login: email } });
-        if (res.email) loginEmail = res.email;
-      } catch {
-        // fall through; supabase will return its own error
-      }
-    }
-    const { data, error } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
-    if (!error && data.user) {
-      const { error: profileError } = await ensureProfileSafely(data.user);
-      if (profileError) {
-        setLoading(false);
-        return toast.error(`Profil yaratilmadi: ${profileError.message}`);
-      }
-    }
-    setLoading(false);
-    if (error) return toast.error(error.message);
-    toast.success("Xush kelibsiz!");
-    navigate({ to: "/dashboard" });
-  };
-
-
-  const ensureProfileSafely = async (user: User) => {
-    try {
-      await ensureUserProfile(user);
-      return { error: null };
-    } catch (error) {
-      return { error: error as Error };
-    }
-  };
-
+  useEffect(() => {
+    // This page is only ever reached by a plain web browser without a
+    // session (Telegram Mini App visits sign in automatically in
+    // __root.tsx and never land here). Login/password no longer exist —
+    // the only way in is through the bot — so we send people there
+    // automatically, with the button below as a manual fallback in case
+    // the browser blocks the auto-redirect.
+    if (!BOT_URL) return;
+    const timer = setTimeout(() => {
+      window.location.assign(BOT_URL);
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, []);
 
   return (
     <main className="aurora-bg flex min-h-screen items-center justify-center px-4 py-12">
@@ -81,57 +52,30 @@ function AuthPage() {
         </Link>
 
         <Card className="glass border-border/50">
-          <CardHeader>
-            <CardTitle className="font-display text-2xl">Hisobingizga kiring</CardTitle>
-            <CardDescription>Telegram bot orqali olingan login bilan tizimga kiring.</CardDescription>
+          <CardHeader className="text-center">
+            <CardTitle className="font-display text-2xl">Telegram orqali kiring</CardTitle>
+            <CardDescription>
+              Login yoki parol yo'q — kirish faqat Telegram bot orqali, avtomatik amalga oshiriladi.
+            </CardDescription>
           </CardHeader>
-          <CardContent>
-            
-
-            <Tabs defaultValue="signin">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="signin">Kirish</TabsTrigger>
-                <TabsTrigger value="signup">Yo'riqnoma</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="signin">
-                <form onSubmit={handleSignIn} className="space-y-4 pt-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email yoki Telegram username</Label>
-                    <Input
-                      id="email"
-                      type="text"
-                      required
-                      placeholder="email@example.com yoki tg123456789"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Ro'yxatdan o'tish Telegram bot orqali amalga oshiriladi. Bot bergan login (<code>tg…</code>) yoki Telegram username'ingizdan foydalaning.
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Parol</Label>
-                    <Input id="password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={loading}>
-                    {loading ? "..." : "Kirish"}
-                  </Button>
-                </form>
-              </TabsContent>
-
-              <TabsContent value="signup">
-                <div className="space-y-4 pt-4 text-sm text-muted-foreground">
-                  <p>
-                    Yangi hisob ochish faqat Telegram bot orqali bajariladi. Botga kiring,
-                    <code> /start</code> bosing, ma'lumotlardan foydalanishga ruxsat bering va ko'rsatmalar bo'yicha parol yarating.
-                  </p>
-                  <p>
-                    Ro'yxatdan o'tish tugagach, bot bergan <code>tg…</code> login yoki Telegram username orqali shu sahifadan kiring.
-                  </p>
-                </div>
-              </TabsContent>
-            </Tabs>
+          <CardContent className="space-y-4 text-center">
+            <p className="text-sm text-muted-foreground">
+              Botni oching va <code>/start</code> yuboring — chiqqan xabardagi{" "}
+              <b>"📱 Ilovani ochish"</b> tugmasi sizni avtomatik tizimga kiritadi.
+            </p>
+            {BOT_URL ? (
+              <Button asChild className="w-full">
+                <a href={BOT_URL} target="_blank" rel="noreferrer">
+                  <Send className="mr-2 size-4" />
+                  Botni ochish
+                </a>
+              </Button>
+            ) : (
+              <p className="text-xs text-destructive">
+                Bot username sozlanmagan (VITE_TELEGRAM_BOT_USERNAME). Iltimos, Telegramda botingizni
+                qidirib toping va /start yuboring.
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>

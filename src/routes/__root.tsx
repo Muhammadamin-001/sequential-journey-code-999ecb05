@@ -12,8 +12,22 @@ import { useEffect, useRef, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { supabase } from "@/integrations/supabase/client";
-import { tryTelegramAutoLogin } from "@/lib/telegram-auto-login";
+import { telegramWebAppSignIn } from "@/lib/telegram-webapp-auth.functions";
 import { Toaster } from "@/components/ui/sonner";
+
+// Telegram's WebApp SDK (loaded via <script> in RootShell below) attaches
+// itself to window.Telegram at runtime. Declaring the shape here keeps
+// `window.Telegram?.WebApp.initData` type-safe without pulling in a package.
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp?: {
+        initData?: string;
+        ready?: () => void;
+      };
+    };
+  }
+}
 
 function NotFoundComponent() {
   return (
@@ -63,12 +77,12 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
           >
             Try again
           </button>
-          <a
-            href="/"
+          <Link
+            to="/"
             className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
           >
             Go home
-          </a>
+          </Link>
         </div>
       </div>
     </div>
