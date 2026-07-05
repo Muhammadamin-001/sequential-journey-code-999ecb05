@@ -14,6 +14,7 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { supabase } from "@/integrations/supabase/client";
 import { telegramWebAppSignIn } from "@/lib/telegram-webapp-auth.functions";
 import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
 
 // Telegram's WebApp SDK (loaded via <script> in RootShell below) attaches
 // itself to window.Telegram at runtime. Declaring the shape here keeps
@@ -163,23 +164,37 @@ function RootComponent() {
       if (!initData) return; // not opened inside Telegram — normal site behavior
 
       const { data: existing } = await supabase.auth.getSession();
-      if (existing.session) return; // already signed in
+      if (existing.session) {
+        // Sessiya allaqachon bor (masalan localStorage'da qolgan) — lekin
+        // hozir /auth sahifasida turgan bo'lsak, dashboard'ga o'tamiz.
+        if (window.location.pathname === "/auth" || window.location.pathname === "/") {
+          router.navigate({ to: "/dashboard" });
+        }
+        return;
+      }
 
       try {
         const result = await telegramWebAppSignIn({ data: { initData } });
         if ("error" in result && result.error) {
           console.error("[telegram-auto-login]", result.error);
+          toast.error(`Telegram orqali kirishda xatolik: ${result.error}`);
           return;
         }
         if (result.access_token && result.refresh_token) {
-          await supabase.auth.setSession({
+          const { error: setSessionError } = await supabase.auth.setSession({
             access_token: result.access_token,
             refresh_token: result.refresh_token,
           });
+          if (setSessionError) {
+            console.error("[telegram-auto-login] setSession failed", setSessionError);
+            toast.error("Sessiya o'rnatilmadi. Qayta urinib ko'ring.");
+            return;
+          }
           router.navigate({ to: "/dashboard" });
         }
       } catch (err) {
         console.error("[telegram-auto-login]", err);
+        toast.error("Telegram orqali avtomatik kirish muvaffaqiyatsiz bo'ldi.");
       }
     };
 

@@ -1,9 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-
+import { getWorkerRuntime } from "@/lib/worker-runtime";
 export const Route = createFileRoute("/api/public/hooks/daily-reset")({
   server: {
     handlers: {
-      POST: async () => {
+      POST: async ({ request }) => {
+        const expected = getWorkerRuntime().env.CRON_SECRET;
+        if (!expected || request.headers.get("X-Cron-Secret") !== expected) {
+          return new Response("Unauthorized", { status: 401 });
+        }
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
         const today = new Date().toISOString().slice(0, 10);

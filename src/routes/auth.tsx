@@ -20,6 +20,10 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
+function isInsideTelegramMiniApp() {
+  return typeof window !== "undefined" && Boolean(window.Telegram?.WebApp?.initData);
+}
+
 function AuthPage() {
   const navigate = useNavigate();
 
@@ -30,15 +34,18 @@ function AuthPage() {
   }, [navigate]);
 
   useEffect(() => {
-    // Agar biz Telegram Mini App ichida bo'lsak, __root.tsx hali fonda
-    // initData orqali login qilishga urinayotgan bo'lishi mumkin.
-    // window.location.assign() butun sahifani (va shu bilan birga
-    // tugamagan login so'rovini) o'ldiradi — shuning uchun Mini App
-    // ichida bo'lsak, botga hech qachon avto-redirect qilmaymiz.
-    if (!BOT_URL) return;
-    if (typeof window !== "undefined" && window.Telegram?.WebApp?.initData) {
-      return;
-    }
+    // Telegram Mini App ichida bo'lsak, __root.tsx fonda initData orqali
+    // avtomatik login qilishga urinayotgan bo'lishi mumkin (bir nechta
+    // ketma-ket server so'rovi: initData tekshirish -> profil ->
+    // magic-link -> verifyOtp — bularning hammasi 1-2 soniya olishi
+    // mumkin). window.location.assign() butun sahifani (demak, shu
+    // tugamagan so'rovni ham) o'ldiradi, shu sababli Mini App ichida
+    // BOT_URL'ga hech qachon avto-redirect qilmaymiz.
+    if (!BOT_URL || isInsideTelegramMiniApp()) return;
+
+    // Faqat oddiy brauzerda (Mini App emas) — foydalanuvchini botga
+    // yo'naltiramiz. Muddat oshirildi, chunki 1.2s juda qisqa edi va
+    // sekin ulanishlarda "kirish" sahifasi doim ko'rinib qolardi.
     const timer = setTimeout(() => {
       window.location.assign(BOT_URL);
     }, 4000);

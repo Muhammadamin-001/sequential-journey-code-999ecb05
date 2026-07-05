@@ -8,7 +8,8 @@ export const Route = createFileRoute("/api/public/telegram/diag")({
     handlers: {
       GET: async () => {
         const runtime = getWorkerRuntime();
-
+        // Faqat CRON_SECRET/DIAG_SECRET bilan kirish mumkin.
+        // (Ideal holatda buni butunlay dev-only qilib qoldirish kerak.)
         const secrets = {
           TELEGRAM_BOT_TOKEN: Boolean(runtime.botToken),
           TELEGRAM_WEBHOOK_SECRET: Boolean(runtime.telegramWebhookSecret),

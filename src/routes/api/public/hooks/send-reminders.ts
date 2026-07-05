@@ -35,7 +35,11 @@ async function tgSend(chatId: number, text: string) {
 export const Route = createFileRoute("/api/public/hooks/send-reminders")({
   server: {
     handlers: {
-      POST: async () => {
+      POST: async ({ request }) => {
+        const expected = getWorkerRuntime().env.CRON_SECRET;
+        if (!expected || request.headers.get("X-Cron-Secret") !== expected) {
+          return new Response("Unauthorized", { status: 401 });
+        }
         const { supabaseAdmin } = await import(
           "@/integrations/supabase/client.server"
         );
