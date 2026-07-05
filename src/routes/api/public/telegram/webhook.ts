@@ -308,11 +308,10 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
             let userId = existingProfile?.id;
             const created = !userId;
 
-            // A brand-new account gets a fresh 6-digit PIN, shown once below.
-            // Existing accounts keep their current PIN untouched — /start never
-            // resets it. Use /resetpassword to deliberately get a new one.
-            let pin: string | null = null;
-
+            // No password/PIN is set here at all: login is now fully automatic,
+            // driven by Telegram's own signed initData (see
+            // src/lib/telegram-webapp-auth.functions.ts), never anything typed
+            // by the user.
             if (userId) {
               const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
                 email_confirm: true,
@@ -320,11 +319,9 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
               });
               if (updateErr) throw updateErr;
             } else {
-              pin = randomPin();
               const { data: createdUser, error: createErr } =
                 await supabaseAdmin.auth.admin.createUser({
                   email,
-                  password: pin,
                   email_confirm: true,
                   user_metadata: { full_name: displayName },
                 });
@@ -362,24 +359,19 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
             return {
               profile: profile ?? { id: userId, full_name: displayName, telegram_username: tgUser },
               created,
-              pin,
-              tgUser,
             };
           };
 
           if (text === "/start") {
             try {
-              const { profile, created, pin, tgUser } = await provisionTelegramUser();
+              const { profile, created } = await provisionTelegramUser();
               await supabaseAdmin
                 .from("telegram_pending_registrations")
                 .delete()
                 .eq("chat_id", chatId);
-              const loginInfo = pin
-                ? loginText(chatId, pin, profile.telegram_username ?? tgUser)
-                : `🌐 Login: user_id <code>${chatId}</code>\nPIN kod: oldingi PIN'ingiz o'zgarmadi. Esdan chiqargan bo'lsangiz — /resetpassword yuboring, yangi PIN beraman.`;
               await send(
                 chatId,
-                `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi." : "✅ Hisobingiz allaqachon faol."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n${loginInfo}\n\nIlovani ochish uchun pastdagi tugmani bosing 👇`,
+                `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi." : "✅ Hisobingiz allaqachon faol."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n📱 Ilovani ochish uchun pastdagi tugmani bosing — login yoki kod kiritish shart emas, avtomatik kirasiz.`,
                 false,
                 appLinkKeyboard(request),
               );
@@ -394,29 +386,10 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
           }
 
           if (text === "/resetpassword") {
-            try {
-              const existingProfile = await linkedProfile();
-              if (!existingProfile) {
-                await send(chatId, "❌ Hisobingiz topilmadi. Avval /start yuboring.");
-                return Response.json({ ok: true });
-              }
-              const pin = randomPin();
-              const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(
-                existingProfile.id,
-                { password: pin },
-              );
-              if (updateErr) throw updateErr;
-              await send(
-                chatId,
-                `🔑 Yangi PIN kodingiz tayyor!\n\n${loginText(chatId, pin, existingProfile.telegram_username)}`,
-              );
-            } catch (error) {
-              console.error(error);
-              await send(
-                chatId,
-                `❌ Xatolik: ${publicProvisioningError(error, request)}`,
-              );
-            }
+            await send(
+              chatId,
+              "ℹ️ Endi kirish uchun login yoki PIN kerak emas — ilova avtomatik tanib oladi. Shunchaki /start yuborib, tugmani bosing.",
+            );
             return Response.json({ ok: true });
           }
 
@@ -478,17 +451,14 @@ Bekor qilish: /cancel`,
           // ---------- Commands ----------
           if (text === "/help" || text === "/register") {
             try {
-              const { profile, created, pin, tgUser } = await provisionTelegramUser();
+              const { profile, created } = await provisionTelegramUser();
               await supabaseAdmin
                 .from("telegram_pending_registrations")
                 .delete()
                 .eq("chat_id", chatId);
-              const loginInfo = pin
-                ? loginText(chatId, pin, profile.telegram_username ?? tgUser)
-                : `🌐 Login: user_id <code>${chatId}</code>\nPIN kod: oldingi PIN'ingiz o'zgarmadi. Esdan chiqargan bo'lsangiz — /resetpassword yuboring.`;
               await send(
                 chatId,
-                `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi va web ilova bilan ulandi." : "✅ Hisobingiz web ilova bilan ulangan."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n${loginInfo}\n\nIlovani ochish uchun pastdagi tugmani bosing 👇`,
+                `👋 Salom, <b>${profile.full_name ?? fromFirstName ?? "do'st"}</b>!\n\n${created ? "✅ Hisobingiz yaratildi va web ilova bilan ulandi." : "✅ Hisobingiz web ilova bilan ulangan."}${isAdminChat(chatId) ? "\n\n🛡 Sizga admin huquqi berildi." : ""}\n\n📱 Ilovani ochish uchun pastdagi tugmani bosing — login yoki kod kiritish shart emas, avtomatik kirasiz.`,
                 false,
                 appLinkKeyboard(request),
               );

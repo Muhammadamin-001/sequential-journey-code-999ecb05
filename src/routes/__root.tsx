@@ -7,12 +7,19 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { supabase } from "@/integrations/supabase/client";
+import { telegramWebAppSignIn } from "@/lib/telegram-webapp-auth.functions";
 import { Toaster } from "@/components/ui/sonner";
+
+declare global {
+  interface Window {
+    Telegram?: { WebApp?: { initData?: string; ready?: () => void; expand?: () => void } };
+  }
+}
 
 function NotFoundComponent() {
   return (
@@ -109,6 +116,7 @@ function RootShell({ children }: { children: ReactNode }) {
     <html lang="en">
       <head>
         <HeadContent />
+        <script src="https://telegram.org/js/telegram-web-app.js" />
       </head>
       <body>
         {children}
@@ -121,6 +129,7 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
+  const autoLoginRanRef = useRef(false);
 
   useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange((event: string) => {
@@ -130,6 +139,44 @@ function RootComponent() {
     });
     return () => sub.subscription.unsubscribe();
   }, [router, queryClient]);
+
+  // Auto sign-in when opened as a Telegram Mini App: Telegram's WebApp SDK
+  // (loaded in RootShell below) exposes a signed initData string proving who
+  // the user is. We verify it server-side and get a real session back — no
+  // login page, password, PIN, or link click required.
+  useEffect(() => {
+    if (autoLoginRanRef.current) return;
+    autoLoginRanRef.current = true;
+
+    const run = async () => {
+      const tg = window.Telegram?.WebApp;
+      tg?.ready?.();
+      const initData = tg?.initData;
+      if (!initData) return; // not opened inside Telegram — normal site behavior
+
+      const { data: existing } = await supabase.auth.getSession();
+      if (existing.session) return; // already signed in
+
+      try {
+        const result = await telegramWebAppSignIn({ data: { initData } });
+        if ("error" in result && result.error) {
+          console.error("[telegram-auto-login]", result.error);
+          return;
+        }
+        if (result.access_token && result.refresh_token) {
+          await supabase.auth.setSession({
+            access_token: result.access_token,
+            refresh_token: result.refresh_token,
+          });
+          router.navigate({ to: "/dashboard" });
+        }
+      } catch (err) {
+        console.error("[telegram-auto-login]", err);
+      }
+    };
+
+    void run();
+  }, [router]);
 
   return (
     <QueryClientProvider client={queryClient}>
