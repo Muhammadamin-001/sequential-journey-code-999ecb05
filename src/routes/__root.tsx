@@ -12,14 +12,8 @@ import { useEffect, useRef, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { supabase } from "@/integrations/supabase/client";
-import { telegramWebAppSignIn } from "@/lib/telegram-webapp-auth.functions";
+import { tryTelegramAutoLogin } from "@/lib/telegram-auto-login";
 import { Toaster } from "@/components/ui/sonner";
-
-declare global {
-  interface Window {
-    Telegram?: { WebApp?: { initData?: string; ready?: () => void; expand?: () => void } };
-  }
-}
 
 function NotFoundComponent() {
   return (
