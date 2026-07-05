@@ -76,6 +76,20 @@ export const telegramWebAppSignIn = createServerFn({ method: "POST" })
     const botToken = runtime.botToken;
     if (!botToken) return { error: "Bot token sozlanmagan." };
 
+    // Server (SUPABASE_URL secret) va client build (VITE_SUPABASE_URL)
+    // boshqa-boshqa Supabase loyihasiga ishora qilsa, bu yerda darrov
+    // to'xtatamiz — aks holda foydalanuvchi keyinroq tushunarsiz
+    // "invalid JWT / unrecognized kid" xatosini ko'radi.
+    if (runtime.projectMismatch) {
+      return {
+        error:
+          "Server konfiguratsiyasi xato: Cloudflare Worker'dagi SUPABASE_URL " +
+          "secret build vaqtidagi VITE_SUPABASE_URL bilan mos kelmaydi. " +
+          "Cloudflare Worker sozlamalarida SUPABASE_URL va " +
+          "SUPABASE_SERVICE_ROLE_KEY qiymatlarini to'g'ri loyihaga moslang.",
+      };
+    }
+
     const tgUser = await verifyInitData(data.initData, botToken);
     if (!tgUser) return { error: "Telegram ma'lumotlari tasdiqlanmadi." };
 
