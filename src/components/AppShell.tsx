@@ -8,11 +8,11 @@ import { cn } from "@/lib/utils";
 import { NotificationsBell } from "@/components/NotificationsBell";
 
 const nav = [
-  { to: "/dashboard", label: "Boshqaruv", icon: LayoutDashboard },
-  { to: "/sections", label: "Bo'limlar", icon: Folder },
-  { to: "/tasks", label: "Vazifalar", icon: ListTodo },
-  { to: "/analytics", label: "Analitika", icon: BarChart3 },
-  { to: "/settings", label: "Sozlamalar", icon: Settings },
+  { to: "/dashboard", label: "Boshqaruv", icon: LayoutDashboard, primary: false },
+  { to: "/sections", label: "Bo'limlar", icon: Folder, primary: false },
+  { to: "/tasks", label: "Vazifalar", icon: ListTodo, primary: true },
+  { to: "/analytics", label: "Analitika", icon: BarChart3, primary: false },
+  { to: "/settings", label: "Sozlamalar", icon: Settings, primary: false },
 ] as const;
 
 export function AppShell({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
@@ -44,7 +44,10 @@ export function AppShell({ title, actions, children }: { title: string; actions?
                   "mb-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
                   active
                     ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                    : item.primary
+                      ? "bg-primary/10 text-primary ring-1 ring-primary/30 hover:bg-primary/15"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  item.primary && "font-semibold",
                 )}
               >
                 <Icon className="size-4" />
@@ -81,10 +84,17 @@ export function AppShell({ title, actions, children }: { title: string; actions?
               to={item.to}
               className={cn(
                 "flex flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors",
-                active ? "text-primary" : "text-muted-foreground",
+                active ? "text-primary" : item.primary ? "text-primary/90 font-semibold" : "text-muted-foreground",
               )}
             >
-              <Icon className={cn("size-6", active && "fill-primary/15")} />
+              <span
+                className={cn(
+                  "flex items-center justify-center rounded-full p-1.5",
+                  item.primary && !active && "bg-primary/15 ring-1 ring-primary/30",
+                )}
+              >
+                <Icon className={cn("size-6", active && "fill-primary/15")} />
+              </span>
             </Link>
           );
         })}

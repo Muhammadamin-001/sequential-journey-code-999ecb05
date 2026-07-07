@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FocusEvent } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Database } from "@/integrations/supabase/types";
+import { getTaskUrgency } from "@/lib/task-priority";
 
 export const Route = createFileRoute("/_authenticated/tasks")({
   head: () => ({ meta: [{ title: "Vazifalar — Vazifa" }] }),
@@ -63,6 +64,29 @@ const PRIORITY_META: Record<TaskPriority, { label: string; color: string }> = {
   high: { label: "Yuqori", color: "#f59e0b" },
   urgent: { label: "Shoshilinch", color: "#ef4444" },
 };
+
+function getProgressPercent(metadata: TaskRow["metadata"]): number | undefined {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    const value = (metadata as Record<string, unknown>).progress_percent;
+    return typeof value === "number" ? value : undefined;
+  }
+  return undefined;
+}
+
+// getTaskUrgency() faqat kichik, aniq shakldagi obyektni kutadi — TaskRow'ni
+// shunga moslashtiramiz. Bu sahifada daily_task_reports bilan join qilinmagani
+// uchun `reportedToday` bermaymiz: kunlik vazifalar uchun bu faqat saralashga
+// ta'sir qiladi (rank=3), UI'da alohida "hisobot yo'q" belgisi qo'yilmaydi.
+function toUrgencyTask(t: TaskRow) {
+  return {
+    task_type: t.task_type,
+    status: t.status,
+    created_at: t.created_at,
+    deadline_at: t.deadline_at,
+    reminder_at: t.reminder_at,
+    metadata: { progress_percent: getProgressPercent(t.metadata) },
+  };
+}
 
 function useTasks() {
   return useQuery({
@@ -99,11 +123,22 @@ function TasksPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<TaskRow | null>(null);
   const [tab, setTab] = useState<"all" | TaskType>("all");
+  const [sectionFilter, setSectionFilter] = useState<string>("all");
 
-  const filtered = useMemo(
-    () => (tab === "all" ? tasks : tasks.filter((t) => t.task_type === tab)),
-    [tasks, tab],
-  );
+  const filtered = useMemo(() => {
+    const bySection =
+      sectionFilter === "all" ? tasks : tasks.filter((t) => t.section_id === sectionFilter);
+    const byTab = tab === "all" ? bySection : bySection.filter((t) => t.task_type === tab);
+
+    // Tab yoki bo'lim filtridan qat'iy nazar, ro'yxat doim shoshilinchlik
+    // darajasi (getTaskUrgency().rank) bo'yicha saralanadi — shoshilinchi
+    // yo'q vazifalar oxirida, o'zaro nisbiy tartibi saqlangan holda qoladi.
+    return [...byTab].sort((a, b) => {
+      const rankA = getTaskUrgency(toUrgencyTask(a))?.rank ?? Number.POSITIVE_INFINITY;
+      const rankB = getTaskUrgency(toUrgencyTask(b))?.rank ?? Number.POSITIVE_INFINITY;
+      return rankA - rankB;
+    });
+  }, [tasks, tab, sectionFilter]);
 
   return (
     <AppShell
@@ -121,12 +156,27 @@ function TasksPage() {
       }
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="mb-5">
-        <TabsList className="grid w-full grid-cols-4 sm:w-auto">
-          <TabsTrigger value="all">Hammasi</TabsTrigger>
-          <TabsTrigger value="daily">Kunlik</TabsTrigger>
-          <TabsTrigger value="deadline">Muddatli</TabsTrigger>
-          <TabsTrigger value="onetime">Bir martalik</TabsTrigger>
-        </TabsList>
+        <div className="flex flex-wrap items-center gap-3">
+          <TabsList className="grid flex-1 grid-cols-4 sm:flex-none sm:w-auto">
+            <TabsTrigger value="all">Hammasi</TabsTrigger>
+            <TabsTrigger value="daily">Kunlik</TabsTrigger>
+            <TabsTrigger value="deadline">Muddatli</TabsTrigger>
+            <TabsTrigger value="onetime">Bir martalik</TabsTrigger>
+          </TabsList>
+          <Select value={sectionFilter} onValueChange={setSectionFilter}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Bo'lim" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Barcha bo'limlar</SelectItem>
+              {sections.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <TabsContent value={tab} className="mt-5">
           {isLoading ? (
             <div className="text-muted-foreground">Yuklanmoqda…</div>
@@ -332,6 +382,9 @@ function TaskDialog({
   const save = useMutation({
     mutationFn: async () => {
       if (!form.title.trim()) throw new Error("Sarlavha kiritilishi shart");
+      if (form.task_type === "deadline" && !form.deadline_at) {
+        throw new Error("Muddatli vazifa uchun muddat kiritilishi shart");
+      }
       const { data: u } = await supabase.auth.getUser();
       if (!u.user) throw new Error("Avtorizatsiya yo'q");
 
@@ -368,9 +421,16 @@ function TaskDialog({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Mobil klaviatura ochilganda fokusdagi maydon uning ostida qolib
+  // ko'rinmay qolishining oldini olish uchun — real qurilmada tekshiring,
+  // chunki brauzer/emulyator xatti-harakati farq qilishi mumkin.
+  const scrollFieldIntoView = (e: FocusEvent<HTMLElement>) => {
+    e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" });
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display">
             {task ? "Vazifani tahrirlash" : "Yangi vazifa"}
@@ -382,6 +442,7 @@ function TaskDialog({
             <Input
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
+              onFocus={scrollFieldIntoView}
               placeholder="Masalan: Ertalabki yugurish"
             />
           </div>
@@ -390,6 +451,7 @@ function TaskDialog({
             <Textarea
               value={form.description ?? ""}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
+              onFocus={scrollFieldIntoView}
               rows={2}
             />
           </div>
@@ -452,11 +514,14 @@ function TaskDialog({
           </div>
           {form.task_type === "deadline" && (
             <div>
-              <Label>Muddat</Label>
+              <Label>
+                Muddat <span className="text-destructive">*</span>
+              </Label>
               <Input
                 type="datetime-local"
                 value={form.deadline_at}
                 onChange={(e) => setForm({ ...form, deadline_at: e.target.value })}
+                onFocus={scrollFieldIntoView}
               />
             </div>
           )}
@@ -466,6 +531,7 @@ function TaskDialog({
               type="datetime-local"
               value={form.reminder_at}
               onChange={(e) => setForm({ ...form, reminder_at: e.target.value })}
+              onFocus={scrollFieldIntoView}
             />
           </div>
         </div>
