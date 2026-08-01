@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type FocusEvent } from "react";
+import { useEffect, useMemo, useState, type FocusEvent } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ import {
   Plus,
   Pencil,
   Trash2,
+  BarChart3,
   ListTodo,
   CalendarClock,
   Repeat,
@@ -45,7 +46,21 @@ export const Route = createFileRoute("/_authenticated/tasks")({
   component: TasksPage,
 });
 
-type TaskRow = Database["public"]["Tables"]["tasks"]["Row"];
+type TaskRow = Database["public"]["Tables"]["tasks"]["Row"] & {
+  plan_amount?: number | null;
+  plan_unit?: string | null;
+};
+type DailyTaskReport = {
+  id: string;
+  task_id: string;
+  user_id: string;
+  occurred_on: string;
+  reported_amount: number;
+  percent: number;
+  note: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
 type TaskType = Database["public"]["Enums"]["task_type"];
 type TaskPriority = Database["public"]["Enums"]["task_priority"];
 type TaskStatus = Database["public"]["Enums"]["task_status"];
@@ -102,6 +117,61 @@ function useTasks() {
   });
 }
 
+function todayDateString(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function dateStringDaysAgo(daysAgo: number): string {
+  return todayDateStringFrom(addDays(new Date(), -daysAgo));
+}
+
+function todayDateStringFrom(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function calculateDailyAveragePercent(task: TaskRow, reports: DailyTaskReport[], today = new Date()): number {
+  const start = new Date(task.created_at);
+  if (Number.isNaN(start.getTime())) return 0;
+  const byDate = new Map(reports.filter((r) => r.task_id === task.id).map((r) => [r.occurred_on, r]));
+  let numerator = 0;
+  let denominator = 0;
+  for (let day = new Date(start.getFullYear(), start.getMonth(), start.getDate()); day <= today; day = addDays(day, 1)) {
+    const report = byDate.get(todayDateStringFrom(day));
+    if (!report) {
+      denominator += 1;
+      continue;
+    }
+    if (Number(report.reported_amount) === 0) continue;
+    numerator += Number(report.percent) || 0;
+    denominator += 1;
+  }
+  return denominator === 0 ? 0 : Math.round(numerator / denominator);
+}
+
+function useDailyReports(taskIds: string[]) {
+  return useQuery({
+    queryKey: ["daily_task_reports", taskIds],
+    enabled: taskIds.length > 0,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("daily_task_reports")
+        .select("*")
+        .in("task_id", taskIds);
+      if (error) throw error;
+      return (data ?? []) as DailyTaskReport[];
+    },
+  });
+}
+
 function useSections() {
   return useQuery({
     queryKey: ["sections", "active"],
@@ -124,6 +194,9 @@ function TasksPage() {
   const [editing, setEditing] = useState<TaskRow | null>(null);
   const [tab, setTab] = useState<"all" | TaskType>("all");
   const [sectionFilter, setSectionFilter] = useState<string>("all");
+  const [historyDaysAgo, setHistoryDaysAgo] = useState(0);
+  const dailyTaskIds = useMemo(() => tasks.filter((t) => t.task_type === "daily").map((t) => t.id), [tasks]);
+  const { data: dailyReports = [] } = useDailyReports(dailyTaskIds);
 
   const filtered = useMemo(() => {
     const bySection =
@@ -155,7 +228,14 @@ function TasksPage() {
         </Button>
       }
     >
-      <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="mb-5">
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          setTab(v as typeof tab);
+          setHistoryDaysAgo(0);
+        }}
+        className="mb-5"
+      >
         <div className="flex flex-wrap items-center gap-3">
           <TabsList className="grid flex-1 grid-cols-4 sm:flex-none sm:w-auto">
             <TabsTrigger value="all">Hammasi</TabsTrigger>
@@ -204,6 +284,7 @@ function TasksPage() {
                   key={t.id}
                   task={t}
                   sections={sections}
+                  dailyReports={dailyReports}
                   onEdit={() => {
                     setEditing(t);
                     setOpen(true);
@@ -211,6 +292,14 @@ function TasksPage() {
                 />
               ))}
             </div>
+          )}
+          {tab === "daily" && filtered.length > 0 && (
+            <DailyHistory
+              tasks={filtered.filter((t) => t.task_type === "daily")}
+              reports={dailyReports}
+              daysAgo={historyDaysAgo}
+              onShowPrevious={() => setHistoryDaysAgo((d) => d + 1)}
+            />
           )}
         </TabsContent>
       </Tabs>
@@ -229,16 +318,19 @@ function TasksPage() {
 function TaskCard({
   task,
   sections,
+  dailyReports,
   onEdit,
 }: {
   task: TaskRow;
   sections: Section[];
+  dailyReports: DailyTaskReport[];
   onEdit: () => void;
 }) {
   const qc = useQueryClient();
   const section = sections.find((s) => s.id === task.section_id);
   const TypeIcon = TYPE_META[task.task_type].icon;
   const done = task.status === "completed";
+  const dailyAverage = task.task_type === "daily" ? calculateDailyAveragePercent(task, dailyReports) : undefined;
 
   const toggle = useMutation({
     mutationFn: async (checked: boolean) => {
@@ -331,6 +423,12 @@ function TaskCard({
           {task.description && (
             <p className="mt-1 text-sm text-muted-foreground">{task.description}</p>
           )}
+          {task.task_type === "daily" && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline">Reja: {task.plan_amount ?? 0} {task.plan_unit ?? ""}</Badge>
+              <Badge variant="secondary">Umumiy: {dailyAverage}%</Badge>
+            </div>
+          )}
           {task.deadline_at && (
             <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
               <Clock className="size-3" />
@@ -339,6 +437,7 @@ function TaskCard({
           )}
         </div>
         <div className="flex gap-1">
+          {task.task_type === "daily" && <DailyReportDialog task={task} />}
           <Button size="icon" variant="ghost" onClick={onEdit}>
             <Pencil className="size-4" />
           </Button>
@@ -364,6 +463,114 @@ function toLocalInput(iso: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+
+function DailyReportDialog({ task }: { task: TaskRow }) {
+  const qc = useQueryClient();
+  const today = todayDateString();
+  const [open, setOpen] = useState(false);
+  const { data: report } = useQuery({
+    queryKey: ["daily_task_reports", task.id, today],
+    enabled: open,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("daily_task_reports")
+        .select("*")
+        .eq("task_id", task.id)
+        .eq("occurred_on", today)
+        .maybeSingle();
+      if (error) throw error;
+      return data as DailyTaskReport | null;
+    },
+  });
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setAmount(report ? String(report.reported_amount) : "");
+      setNote(report?.note ?? "");
+    }
+  }, [open, report]);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const { data: u } = await supabase.auth.getUser();
+      if (!u.user) throw new Error("Avtorizatsiya yo'q");
+      const reportedAmount = Number(amount);
+      if (Number.isNaN(reportedAmount) || reportedAmount < 0) throw new Error("Miqdor 0 yoki undan katta bo'lishi kerak");
+      const planAmount = Number(task.plan_amount ?? 0);
+      const percent = planAmount > 0 ? Math.min(reportedAmount / planAmount, 1) * 100 : 0;
+      const { error } = await (supabase as any).from("daily_task_reports").upsert(
+        {
+          task_id: task.id,
+          user_id: u.user.id,
+          occurred_on: today,
+          reported_amount: reportedAmount,
+          percent,
+          note: note.trim() || null,
+        },
+        { onConflict: "task_id,occurred_on" },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Hisobot saqlandi");
+      qc.invalidateQueries({ queryKey: ["daily_task_reports"] });
+      setOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
+        <BarChart3 className="size-4" /> Hisobot
+      </Button>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader><DialogTitle className="font-display">Kunlik hisobot</DialogTitle></DialogHeader>
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border/50 p-3 text-sm text-muted-foreground">
+            <div className="font-medium text-foreground">{task.title}</div>
+            <div>Bugun: {today}</div>
+            {report && <div>Joriy hisobot: {report.reported_amount} {task.plan_unit ?? ""} ({Math.round(report.percent)}%)</div>}
+          </div>
+          <div>
+            <Label>Miqdor</Label>
+            <Input type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`Reja: ${task.plan_amount ?? 0} ${task.plan_unit ?? ""}`} />
+          </div>
+          <div>
+            <Label>Izoh (ixtiyoriy)</Label>
+            <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>Bekor qilish</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saqlanmoqda…" : "Saqlash"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DailyHistory({ tasks, reports, daysAgo, onShowPrevious }: { tasks: TaskRow[]; reports: DailyTaskReport[]; daysAgo: number; onShowPrevious: () => void }) {
+  const date = dateStringDaysAgo(daysAgo + 1);
+  const reportsByTask = new Map(reports.filter((r) => r.occurred_on === date).map((r) => [r.task_id, r]));
+  return (
+    <div className="mt-4 rounded-xl border border-border/50 p-4">
+      <Button variant="outline" size="sm" onClick={onShowPrevious}>▼ Tarixni ko'rish</Button>
+      {daysAgo > 0 && <div className="mt-3 text-sm font-medium">{date} sanasi hisobotlari</div>}
+      {daysAgo > 0 && (
+        <div className="mt-2 grid gap-2">
+          {tasks.map((task) => {
+            const report = reportsByTask.get(task.id);
+            return <div key={task.id} className="rounded-lg border border-border/40 p-3 text-sm"><span className="font-medium">{task.title}</span>: {report ? `${report.reported_amount} ${task.plan_unit ?? ""} — ${Math.round(report.percent)}%${report.note ? ` (${report.note})` : ""}` : "hisobot yo'q (0%)"}</div>;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TaskDialog({
   open,
   onOpenChange,
@@ -384,6 +591,8 @@ function TaskDialog({
     section_id: task?.section_id ?? "",
     deadline_at: toLocalInput(task?.deadline_at ?? null),
     reminder_at: toLocalInput(task?.reminder_at ?? null),
+    plan_amount: task?.plan_amount == null ? "" : String(task.plan_amount),
+    plan_unit: task?.plan_unit ?? "",
   });
 
   const save = useMutation({
@@ -408,6 +617,8 @@ function TaskDialog({
         reminder_at: form.reminder_at ? new Date(form.reminder_at).toISOString() : null,
         recurrence:
           form.task_type === "daily" ? { frequency: "daily", interval: 1 } : null,
+        plan_amount: form.task_type === "daily" && form.plan_amount !== "" ? Number(form.plan_amount) : null,
+        plan_unit: form.task_type === "daily" ? form.plan_unit.trim() || null : null,
       };
 
       if (task) {
@@ -519,6 +730,31 @@ function TaskDialog({
               </Select>
             </div>
           </div>
+          {form.task_type === "daily" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Reja miqdori</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={form.plan_amount}
+                  onChange={(e) => setForm({ ...form, plan_amount: e.target.value })}
+                  onFocus={scrollFieldIntoView}
+                  placeholder="10"
+                />
+              </div>
+              <div>
+                <Label>Birlik</Label>
+                <Input
+                  value={form.plan_unit}
+                  onChange={(e) => setForm({ ...form, plan_unit: e.target.value })}
+                  onFocus={scrollFieldIntoView}
+                  placeholder="Masalan: daqiqa"
+                />
+              </div>
+            </div>
+          )}
           {form.task_type === "deadline" && (
             <div>
               <Label>
