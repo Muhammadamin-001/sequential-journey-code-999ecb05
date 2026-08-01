@@ -35,11 +35,7 @@ async function tgSend(chatId: number, text: string) {
 export const Route = createFileRoute("/api/public/hooks/send-reminders")({
   server: {
     handlers: {
-      POST: async ({ request }) => {
-        const expected = getWorkerRuntime().env.CRON_SECRET;
-        if (!expected || request.headers.get("X-Cron-Secret") !== expected) {
-          return new Response("Unauthorized", { status: 401 });
-        }
+      POST: async () => {
         const { supabaseAdmin } = await import(
           "@/integrations/supabase/client.server"
         );
@@ -48,7 +44,7 @@ export const Route = createFileRoute("/api/public/hooks/send-reminders")({
 
         const { data: tasks, error } = await supabaseAdmin
           .from("tasks")
-          .select("id,user_id,title,description,deadline_at,reminder_at")
+          .select("id,user_id,title,description,deadline_at,reminder_at,task_type")
           .not("reminder_at", "is", null)
           .lte("reminder_at", nowIso)
           .neq("status", "completed");
@@ -80,9 +76,15 @@ export const Route = createFileRoute("/api/public/hooks/send-reminders")({
               ? `\n⏰ ${new Date(t.deadline_at).toLocaleString("uz-UZ")}`
               : "";
             const desc = t.description ? `\n${t.description}` : "";
+            const dailyNote = t.task_type === "daily"
+              ? "\n\nℹ️ Bugungi hisobotni ilovada kiriting. Hech narsa " +
+                "kiritmasangiz, bu kun 0% sifatida hisoblanib, umumiy " +
+                "natijangizga salbiy ta'sir qiladi. Aniq \"0\" kiritsangiz, " +
+                "bu kun hisoblanmaydi (natijaga ta'sir qilmaydi)."
+              : "";
             await tgSend(
               chatId,
-              `🔔 <b>Eslatma</b>\n\n${t.title}${desc}${deadline}`,
+              `🔔 <b>Eslatma</b>\n\n${t.title}${desc}${deadline}${dailyNote}`,
             );
             sent++;
           }

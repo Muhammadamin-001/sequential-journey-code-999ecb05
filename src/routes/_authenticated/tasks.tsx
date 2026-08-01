@@ -252,15 +252,22 @@ function TaskCard({
         .eq("id", task.id);
       if (error) throw error;
 
+      const { data: u } = await supabase.auth.getUser();
+      if (!u.user) return;
       if (checked) {
-        const { data: u } = await supabase.auth.getUser();
-        if (u.user) {
-          await supabase.from("task_history").insert({
-            task_id: task.id,
-            user_id: u.user.id,
-            status: "completed",
-          });
-        }
+        await supabase.from("task_history").insert({
+          task_id: task.id,
+          user_id: u.user.id,
+          status: "completed",
+        });
+      } else {
+        // Analitikada noto'g'ri "bajarilgan" hisobga qo'shilib qolmasligi
+        // uchun, qayta bosilganda avvalgi "completed" yozuvini olib tashlaymiz.
+        await supabase
+          .from("task_history")
+          .delete()
+          .eq("task_id", task.id)
+          .eq("status", "completed");
       }
     },
     onSuccess: () => {
